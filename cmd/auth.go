@@ -53,7 +53,7 @@ func runAuth(cmd *cobra.Command, args []string) {
 	fmt.Println("\n💡 Usage:")
 	fmt.Println("1. Copy the token above")
 	fmt.Println("2. Add to config.yaml:")
-	fmt.Printf("   remote_providers:\n")
+	fmt.Printf("   providers:\n")
 	fmt.Printf("     - name: \"%s\"\n", provider)
 	fmt.Printf("       config:\n")
 	fmt.Printf("         token: \"%s\"\n", token)
