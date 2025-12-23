@@ -12,15 +12,17 @@ import (
 	"slices"
 	"time"
 
+	"github.com/BrunoTulio/logr"
 	"github.com/BrunoTulio/pgopher/internal/utils"
 	"golang.org/x/oauth2"
 )
 
 type Auth struct {
+	log logr.Logger
 }
 
-func New() *Auth {
-	return &Auth{}
+func New(log logr.Logger) *Auth {
+	return &Auth{log}
 }
 
 type OauthInfo struct {
@@ -47,7 +49,7 @@ var (
 		},
 		"dropbox": {
 			ClientID:         os.Getenv("DROPBOX_CLIENT_ID"),
-			ClientSecret:     utils.MustReveal(os.Getenv("DROPBOX_CLIENT_SECRETE")),
+			ClientSecret:     utils.MustReveal(os.Getenv("DROPBOX_CLIENT_SECRET")),
 			Scopes:           []string{},
 			EndpointAuthURL:  "https://www.dropbox.com/oauth2/authorize",
 			EndpointTokenURL: "https://api.dropboxapi.com/oauth2/token",
@@ -79,10 +81,10 @@ func (a *Auth) Run(providerName string) (string, error) {
 
 	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline)
 
-	fmt.Printf("🚀 %s OAuth2 - Autorizando...\n", providerName)
-	fmt.Println("\n📖 Abra este link no navegador:")
+	a.log.Infof("🚀 %s OAuth2 - Autorizando...\n", providerName)
+	a.log.Infof("\n📖 Abra este link no navegador:")
 	fmt.Println(authURL)
-	fmt.Println("\n⏳ Aguardando callback em http://localhost:53682/...")
+	a.log.Infof("\n⏳ Aguardando callback em http://localhost:53682/...")
 
 	codeChan := make(chan string)
 	errChan := make(chan error)
@@ -140,16 +142,12 @@ func (a *Auth) Run(providerName string) (string, error) {
 	defer cancel()
 	_ = server.Shutdown(ctx)
 
-	fmt.Println("\n🔄 Trocando código por access token...")
+	a.log.Infof("\n🔄 Trocando código por access token...")
 	token, err := conf.Exchange(context.Background(), code)
 	if err != nil {
 		return "", fmt.Errorf("❌ Erro ao trocar código: %v\n", err)
 
 	}
-
-	fmt.Println("✅ Token obtido com sucesso!")
-	fmt.Printf("\n🔑 Access Token: %s\n", token.AccessToken)
-	fmt.Printf("⏰ Expira em: %v\n", token.Expiry)
 
 	jsonData, err := json.Marshal(token)
 	if err != nil {
@@ -165,19 +163,3 @@ func randomState() string {
 	_, _ = rand.Read(b)
 	return base64.URLEncoding.EncodeToString(b)
 }
-
-//func (auth *Auth) Run(ctx context.Context, provider string) error {
-//	providers := []string{"drive", "dropbox", "mega"}
-//
-//	isExist := slices.Contains(providers, provider)
-//
-//	if !isExist {
-//		return fmt.Errorf("provider %s does not exist for method auth", provider)
-//	}
-//
-//
-//
-//
-//
-//
-//}
