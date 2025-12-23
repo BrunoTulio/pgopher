@@ -176,13 +176,13 @@ func (c *Config) validateRemoteProviders() error {
 			logr.Warnf("Provider '%s' is enabled but has no schedule configured", provider.Name)
 		}
 
-		if provider.ScheduleDay != nil {
-			day := *provider.ScheduleDay
-			if day < 0 || day > 6 {
-				return fmt.Errorf("provider[%d] (%s): schedule_day must be between 0 (Sunday) and 6 (Saturday), got %d",
-					i, provider.Name, day)
-			}
-		}
+		//if provider.ScheduleDay != nil {
+		//	day := *provider.ScheduleDay
+		//	if day < 0 || day > 6 {
+		//		return fmt.Errorf("provider[%d] (%s): schedule_day must be between 0 (Sunday) and 6 (Saturday), got %d",
+		//			i, provider.Name, day)
+		//	}
+		//}
 
 		if provider.MaxVersions < 0 {
 			return fmt.Errorf("provider[%d] (%s): max_versions cannot be negative, got %d",
@@ -229,7 +229,7 @@ func validateProviderConfig(index int, provider *RemoteProvider) error {
 
 // ✅ validateS3Config valida configurações do S3
 func validateS3Config(index int, provider *RemoteProvider) error {
-	required := []string{"access_key_id", "secret_access_key", "region"}
+	required := []string{"access_key_id", "secret_access_key"}
 
 	for _, field := range required {
 		if val, ok := provider.Config[field]; !ok || strings.TrimSpace(val) == "" {
@@ -238,7 +238,6 @@ func validateS3Config(index int, provider *RemoteProvider) error {
 		}
 	}
 
-	// Validar provider
 	validProviders := map[string]bool{
 		"AWS": true, "Minio": true, "Wasabi": true, "DigitalOcean": true,
 		"Ceph": true, "Cloudflare": true, "Alibaba": true, "Other": true,

@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/base64"
 	"os"
 	"regexp"
 	"strconv"
@@ -33,6 +32,9 @@ func mustString(key string) string {
 	if !ok {
 		panic("Config error: environment variable not found: " + key)
 	}
+
+	_ = os.Unsetenv(key)
+
 	return value
 }
 
@@ -41,7 +43,17 @@ func stringOrEmpty(key string, defaultValue string) string {
 	if !ok {
 		return defaultValue
 	}
+	_ = os.Unsetenv(key)
 	return value
+}
+
+func stringLookup(key string) (string, bool) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return "", false
+	}
+	_ = os.Unsetenv(key)
+	return value, true
 }
 
 func intOrEmpty(key string, defaultValue int) int {
@@ -49,6 +61,8 @@ func intOrEmpty(key string, defaultValue int) int {
 	if !ok {
 		return defaultValue
 	}
+	_ = os.Unsetenv(key)
+
 	value, err := strconv.Atoi(valueStr)
 	if err != nil {
 		return defaultValue
@@ -56,12 +70,33 @@ func intOrEmpty(key string, defaultValue int) int {
 	return value
 }
 
-func mustInt64(key string) int64 {
-	valueStr := mustString(key)
-	value, err := strconv.ParseInt(valueStr, 10, 64)
-	if err != nil {
-		panic("Config error: invalid int64 value for " + key + ": " + valueStr)
+func intLookup(key string) (int, bool) {
+	valueStr, ok := os.LookupEnv(key)
+	if !ok {
+		return 0, false
 	}
+	_ = os.Unsetenv(key)
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		return 0, false
+	}
+
+	return value, true
+}
+
+func mustBool(key string) bool {
+	valueStr, ok := os.LookupEnv(key)
+	if !ok {
+		panic("Config error: environment variable not found: " + key)
+	}
+
+	_ = os.Unsetenv(key)
+	value, err := strconv.ParseBool(valueStr)
+
+	if err != nil {
+		panic("Config error parse bool: " + key + ": " + valueStr)
+	}
+
 	return value
 }
 
@@ -70,6 +105,8 @@ func boolOrEmpty(key string, defaultValue bool) bool {
 	if !ok {
 		return defaultValue
 	}
+	_ = os.Unsetenv(key)
+
 	value, err := strconv.ParseBool(valueStr)
 	if err != nil {
 		return defaultValue
@@ -77,19 +114,43 @@ func boolOrEmpty(key string, defaultValue bool) bool {
 	return value
 }
 
+func boolLookup(key string) (bool, bool) {
+	valueStr, ok := os.LookupEnv(key)
+	if !ok {
+		return false, false
+	}
+	_ = os.Unsetenv(key)
+
+	value, err := strconv.ParseBool(valueStr)
+	if err != nil {
+		return false, false
+	}
+
+	return value, true
+}
+func stringsMust(key string) []string {
+	valueStr, ok := os.LookupEnv(key)
+	if !ok {
+		panic("Config error: environment variable not found: " + key)
+	}
+	_ = os.Unsetenv(key)
+	return strings.Split(valueStr, ",")
+}
+
 func stringsOrEmpty(key string, defaultValue []string) []string {
 	valueStr, ok := os.LookupEnv(key)
 	if !ok {
 		return defaultValue
 	}
+	_ = os.Unsetenv(key)
 	return strings.Split(valueStr, ",")
 }
 
-func decodeBase64(value string) string {
-	data, err := base64.StdEncoding.DecodeString(value)
-	if err != nil {
-		// se der erro, volta vazio ou loga
-		return ""
+func stringsLookup(key string) ([]string, bool) {
+	valueStr, ok := os.LookupEnv(key)
+	if !ok {
+		return nil, false
 	}
-	return string(data)
+	_ = os.Unsetenv(key)
+	return strings.Split(valueStr, ","), true
 }

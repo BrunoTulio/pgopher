@@ -29,3 +29,5 @@ backups/
 *.conf
 rclone.conf
 .env
+
+pgopher.yaml
