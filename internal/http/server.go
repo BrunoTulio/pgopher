@@ -138,7 +138,7 @@ func (s *Server) handleCatalogProvider(w http.ResponseWriter, r *http.Request) {
 			"name":       file.Name,
 			"size_bytes": file.Size,
 			"size_human": utils.FormatBytes(file.Size),
-			"mod_time":   file.ModTime.Format(time.RFC3339),
+			"mod_time":   file.ModTime,
 			"encrypted":  file.Encrypted,
 		}
 	}

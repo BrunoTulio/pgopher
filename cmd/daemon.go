@@ -14,17 +14,10 @@ import (
 	"github.com/BrunoTulio/pgopher/internal/config"
 	"github.com/BrunoTulio/pgopher/internal/database"
 	apphttp "github.com/BrunoTulio/pgopher/internal/http"
-	"github.com/BrunoTulio/pgopher/internal/notify"
+	"github.com/BrunoTulio/pgopher/internal/lock"
 	"github.com/BrunoTulio/pgopher/internal/remote"
-	"github.com/BrunoTulio/pgopher/internal/restore"
 	"github.com/BrunoTulio/pgopher/internal/scheduler"
-	"github.com/BrunoTulio/pgopher/internal/utils"
-	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
-)
-
-var (
-	cfgFile string
 )
 
 const (
@@ -36,7 +29,7 @@ const (
 // daemonCmd represents the daemon command
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
-	Short: "Run pgopher as a background service",
+	Short: "Backup pgopher as a background service",
 	Long: `Start pgopher in daemon mode to continuously run scheduled backups.
 
 This command starts a long-running process that:
@@ -54,18 +47,16 @@ Examples:
   # Start with custom config
   pgopher daemon --config /path/to/config.yaml
 
-  # Run as systemd service
+  # Backup as systemd service
   systemctl start pgopher
 
-  # Run with Docker
+  # Backup with Docker
   docker run -d pgopher daemon`,
 	Run: runDaemon,
 }
 
 func init() {
 	rootCmd.AddCommand(daemonCmd)
-
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.yaml)")
 }
 
 func runDaemon(cmd *cobra.Command, args []string) {
@@ -87,22 +78,27 @@ func runDaemon(cmd *cobra.Command, args []string) {
 		log.Fatalf("Database connection failed: %v", err)
 	}
 	log.Info("✅ Database connection successful")
+	lockMgr := lock.New()
 	backupService := backup.NewWithFnOptions(log, backup.WithConfig(cfg))
 	catalogService := catalog.NewWithOptions(log, catalog.WithConfig(cfg))
-	restoreService := restore.NewWithOpts(catalogService, log, restore.WithConfig(cfg))
 	notifierService := createNotifierService(cfg)
 
 	if cfg.RunOnStartup {
-		log.Info("Running initial backup...")
-		backupFile, err := runOnStartBackupLocal(backupService)
-		if err != nil {
-			log.Errorf("Initial backup failed: %v", err)
+		if lockMgr.IsRestoreRunning() {
+			log.Warn("⚠️  Restore in progress, skipping scheduled local backup")
 		} else {
-			log.Infof("Initial backup saved: %s", backupFile)
+			log.Info("Running initial backup...")
+			backupFile, err := runOnStartBackupLocal(backupService)
+			if err != nil {
+				log.Errorf("Initial backup failed: %v", err)
+			} else {
+				log.Infof("Initial backup saved: %s", backupFile)
+			}
 		}
 	}
 
 	if cfg.RunRemoteOnStartup {
+
 		log.Info("Running remote backup...")
 
 		for _, providerCfg := range cfg.RemoteProviders {
@@ -110,40 +106,44 @@ func runDaemon(cmd *cobra.Command, args []string) {
 				continue
 			}
 
+			if lockMgr.IsRestoreRunning() {
+				log.Warnf("⚠️  Restore in progress, skipping scheduled remote provider %s backup", providerCfg.Name)
+				continue
+			}
+
 			log.Infof("📦 Initializing provider: %s (%s)", providerCfg.Name, providerCfg.Type)
 
-			provider, err := remote.NewProviderWithOptions(restoreService, log,
+			provider, err := remote.NewProviderWithOptions(log,
 				remote.WithOptions(providerCfg, cfg.Database, cfg.EncryptionKey),
 			)
 			if err != nil {
 				log.Errorf("Failed to create provider %s: %v", providerCfg.Name, err)
 
-				go func() {
-					_ = notifierService.Error(ctx, fmt.Sprintf("Failed to create provider %s: %v", providerCfg.Name, err))
-				}()
+				go func(name string, err error) {
+					_ = notifierService.Error(ctx, fmt.Sprintf("Failed to create provider %s: %v", name, err))
+				}(providerCfg.Name, err)
 				continue
 			}
 
 			if err := runOnStartBackupRemote(provider, providerCfg); err != nil {
 				log.Errorf("Initializing provider failed: %v", err)
-
-				go func() {
-					_ = notifierService.Error(ctx, fmt.Sprintf("Initializing provider failed: %v", err))
-				}()
+				go func(name string, err error) {
+					_ = notifierService.Error(ctx, fmt.Sprintf("Initializing provider %s failed: %v", name, err))
+				}(providerCfg.Name, err)
 				continue
 			}
 
 			log.Infof("✅ Backup to %s completed!", providerCfg.Name)
-			go func() {
-				_ = notifierService.Success(ctx, fmt.Sprintf("✅ Backup to %s completed!", providerCfg.Name))
-			}()
+			go func(name string) {
+				_ = notifierService.Success(ctx, fmt.Sprintf("✅ Backup to %s completed!", name))
+			}(providerCfg.Name)
 		}
 	}
 
 	sched := scheduler.NewWithOptions(
 		backupService,
 		notifierService,
-		restoreService,
+		lockMgr,
 		log,
 		scheduler.WithConfig(cfg),
 	)
@@ -162,7 +162,7 @@ func runDaemon(cmd *cobra.Command, args []string) {
 
 	go func() {
 		log.Infof("🌐 HTTP server on %s", cfg.Server.Addr)
-		if err := s.ListenAndServe(); err != nil { // 👈 DIRETO!
+		if err := s.ListenAndServe(); err != nil {
 			log.Fatalf("HTTP failed: %v", err)
 		}
 	}()
@@ -179,79 +179,6 @@ func runDaemon(cmd *cobra.Command, args []string) {
 
 }
 
-func loadEnvIfExists() {
-	envFile := ".env"
-
-	if _, err := os.Stat(envFile); err != nil {
-		return
-	}
-
-	if err := godotenv.Load(envFile); err != nil {
-		log.Warnf("⚠️  Failed to load .env: %v", err)
-		return
-	}
-
-	log.Info("🔧 Loaded .env file (development mode)")
-}
-
-func loadConfigOrFail() (*config.Config, error) {
-	if cfgFile == "" {
-		cfgFile = "./pgopher.yaml"
-	}
-
-	if utils.FileExists(cfgFile) {
-		var err error
-		cfg, err := config.LoadFromYAML(cfgFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load YAML config: %w", err)
-		}
-
-		return cfg, nil
-	}
-	log.Info("📄 Config file not found, using environment variables")
-	cfg, err := config.LoadFromEnv()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config from ENV: %w", err)
-	}
-
-	return cfg, nil
-
-}
-
-func createNotifierService(cfg *config.Config) notify.Notifier {
-	notifierService := notify.NewMultiNotifier(cfg.Notification.SuccessEnabled, cfg.Notification.ErrorEnabled, log)
-	if cfg.IsNotifyMail() {
-		notifierService.AddNotifier(notify.NewMail(
-			cfg.Notification.SMTPServer,
-			cfg.Notification.SMTPPort,
-			cfg.Notification.SMTPUser,
-			cfg.Notification.SMTPPassword,
-			cfg.Notification.Emails,
-			cfg.Notification.EmailFrom,
-			cfg.Notification.SMTPAuth,
-			cfg.Notification.SMTPTLS,
-			log,
-		))
-	}
-
-	if cfg.IsNotifyDiscord() {
-		notifierService.AddNotifier(notify.NewDiscord(
-			cfg.Notification.DiscordWebhookURL,
-			log,
-		))
-	}
-
-	if cfg.IsNotifyTelegram() {
-		notifierService.AddNotifier(notify.NewTelegramNotifier(
-			cfg.Notification.TelegramBotToken,
-			cfg.Notification.TelegramChatID,
-			log,
-		))
-	}
-
-	return notifierService
-}
-
 func runOnStartBackupLocal(backupService *backup.Local) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -263,7 +190,7 @@ func runOnStartBackupRemote(provider *remote.Provider, providerCfg config.Remote
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Hour)
 	defer cancel()
 
-	if err := provider.Run(ctx); err != nil {
+	if err := provider.Backup(ctx); err != nil {
 		return fmt.Errorf("backup to %s failed: %v", providerCfg.Name, err)
 	}
 

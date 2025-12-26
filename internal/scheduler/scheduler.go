@@ -9,6 +9,7 @@ import (
 	"github.com/BrunoTulio/logr"
 	"github.com/BrunoTulio/pgopher/internal/backup"
 	"github.com/BrunoTulio/pgopher/internal/config"
+	"github.com/BrunoTulio/pgopher/internal/lock"
 	"github.com/BrunoTulio/pgopher/internal/notify"
 	"github.com/BrunoTulio/pgopher/internal/remote"
 
@@ -31,13 +32,13 @@ type Scheduler struct {
 	runningJobs int
 	log         logr.Logger
 	notifier    notify.Notifier
-	locker      remote.Locker
+	locker      lock.Locker
 	jobs        []JobInfo
 }
 
 func New(backupSvc *backup.Local,
+	locker lock.Locker,
 	notifier notify.Notifier,
-	locker remote.Locker,
 	log logr.Logger,
 ) *Scheduler {
 	return NewWithOptions(backupSvc, notifier, locker, log)
@@ -46,7 +47,7 @@ func New(backupSvc *backup.Local,
 func NewWithOptions(
 	backupSvc *backup.Local,
 	notifier notify.Notifier,
-	locker remote.Locker,
+	locker lock.Locker,
 	log logr.Logger,
 	opts ...func(options *Options),
 ) *Scheduler {
@@ -65,9 +66,9 @@ func NewWithOptions(
 		cron:      c,
 		opt:       opt,
 		backupSvc: backupSvc,
-		locker:    locker,
 		log:       log,
 		notifier:  notifier,
+		locker:    locker,
 	}
 }
 
@@ -218,6 +219,12 @@ func (s *Scheduler) scheduleLocalBackups() error {
 }
 
 func (s *Scheduler) runLocalBackup() {
+
+	if s.locker.IsRestoreRunning() {
+		s.log.Warn("⚠️  Restore in progress, skipping scheduled backup")
+		return
+	}
+
 	s.mu.Lock()
 	s.runningJobs++
 	s.mu.Unlock()
@@ -250,12 +257,17 @@ func (s *Scheduler) runLocalBackup() {
 
 func (s *Scheduler) runRemoteBackup(remoteProvider config.RemoteProvider) {
 
+	if s.locker.IsRestoreRunning() {
+		s.log.Warn("⚠️  Restore in progress, skipping scheduled backup")
+		return
+	}
+
 	s.log.Infof("☁️  Scheduled cfg backup started: %s", remoteProvider.Name)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(remoteProvider.Timeout)*time.Second)
 	defer cancel()
 
-	provider, err := remote.NewProviderWithOptions(s.locker, s.log, remote.WithOptions(remoteProvider, s.opt.Database, s.opt.EncryptionKey))
+	provider, err := remote.NewProviderWithOptions( /*s.locker,*/ s.log, remote.WithOptions(remoteProvider, s.opt.Database, s.opt.EncryptionKey))
 	if err != nil {
 		s.log.Errorf("❌ Remote %s provider creation failed: %v", remoteProvider.Name, err)
 		go func() {
@@ -264,7 +276,7 @@ func (s *Scheduler) runRemoteBackup(remoteProvider config.RemoteProvider) {
 		return
 	}
 
-	if err := provider.Run(ctx); err != nil {
+	if err := provider.Backup(ctx); err != nil {
 		s.log.Errorf("❌ Remote %s backup failed: %v", remoteProvider.Name, err)
 		go func() {
 			_ = s.notifier.Error(ctx, fmt.Sprintf("❌ Remote %s backup failed: %v", remoteProvider.Name, err))

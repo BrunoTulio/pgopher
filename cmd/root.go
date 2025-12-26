@@ -9,7 +9,8 @@ import (
 )
 
 var (
-	log logr.Logger
+	log     logr.Logger
+	cfgFile string
 
 	configDefault = `# =============================================================================
 # PGOPHER - PostgreSQL Backup Configuration
@@ -184,4 +185,6 @@ func Execute() {
 
 func init() {
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is ./config.yaml)")
+
 }

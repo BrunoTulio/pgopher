@@ -32,7 +32,6 @@ type (
 		opt            *Options
 		fsys           fs.Fs
 		currentVersion int
-		locker         Locker
 	}
 
 	BackupFile struct {
@@ -43,12 +42,11 @@ type (
 	}
 )
 
-func NewProvider(locker Locker, log logr.Logger) (*Provider, error) {
-	return NewProviderWithOptions(locker, log)
+func NewProvider(log logr.Logger) (*Provider, error) {
+	return NewProviderWithOptions(log)
 }
 
 func NewProviderWithOptions(
-	locker Locker,
 	log logr.Logger,
 	opts ...FnOptions,
 ) (*Provider, error) {
@@ -70,19 +68,17 @@ func NewProviderWithOptions(
 		opt:            opt,
 		fsys:           fsys,
 		currentVersion: 1,
-		locker:         locker,
 	}
 
 	return p, nil
 }
 
-func (p *Provider) Run(ctx context.Context) error {
-	if !p.locker.LockBackup() {
-		p.log.Warn("🔒 Restore ativo, backup adiado")
-		return nil
-	}
-	defer p.locker.UnlockBackup()
-	defer p.opt.CleanupEnv()
+func (p *Provider) CleanupEnvs() {
+	p.opt.CleanupEnv()
+}
+
+func (p *Provider) Backup(ctx context.Context) error {
+	defer p.CleanupEnvs()
 
 	log := p.log.WithMap(map[string]any{
 		"operation": "remote_backup",
@@ -126,6 +122,8 @@ func (p *Provider) Run(ctx context.Context) error {
 }
 
 func (p *Provider) List(ctx context.Context) ([]BackupFile, error) {
+	defer p.CleanupEnvs()
+
 	p.log.Infof("📂 Listing remote: %s", p.opt.Name)
 
 	entries, err := p.fsys.List(ctx, p.opt.Path)
@@ -163,6 +161,8 @@ func (p *Provider) List(ctx context.Context) ([]BackupFile, error) {
 	return files, nil
 }
 func (p *Provider) Download(ctx context.Context, fileName, localPath string) error {
+	defer p.CleanupEnvs()
+
 	p.log.Infof("📂 Download remote: %s", p.opt.Name)
 
 	obj, err := p.fsys.NewObject(ctx, fileName)
@@ -176,7 +176,9 @@ func (p *Provider) Download(ctx context.Context, fileName, localPath string) err
 	if err != nil {
 		return fmt.Errorf("failed to open remote file: %w", err)
 	}
-	defer reader.Close()
+	defer func() {
+		_ = reader.Close()
+	}()
 
 	localFile, err := os.Create(localPath)
 	if err != nil {
@@ -230,7 +232,6 @@ func (p *Provider) uploadFile(ctx context.Context, localPath, remoteName string)
 
 func initRclone() {
 	rcloneInitOnce.Do(func() {
-		//configfile.Install()
 		configureRclone()
 	})
 }
@@ -275,22 +276,14 @@ func configureRclone() {
 
 func createRemoteFs(opt *Options) (fs.Fs, error) {
 	ctx := context.Background()
-	//data := config.LoadedData()
-
-	//data.SetValue(opt.Name, "type", opt.Type)
-	//for k, v := range opt.Config {
-	//	data.SetValue(opt.Name, k, v)
-	//}
-	if err := opt.SetupEnv(); err != nil {
+	err := opt.SetupEnv()
+	if err != nil {
 		return nil, fmt.Errorf("setup environment: %w", err)
 	}
-
 	remotePath := opt.Name + ":"
-
 	fsys, err := fs.NewFs(ctx, remotePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create fs: %w", err)
 	}
-
 	return fsys, nil
 }

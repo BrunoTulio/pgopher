@@ -20,22 +20,12 @@ import (
 	"github.com/BrunoTulio/pgopher/internal/remote"
 )
 
-var _ remote.Locker = (*Restore)(nil)
-
 type Restore struct {
 	log      logr.Logger
 	opt      *Options
 	catSvr   *catalog.Catalog
 	notifier notify.Notifier
 	mu       sync.Mutex
-}
-
-func (r *Restore) LockBackup() bool {
-	return r.mu.TryLock()
-}
-
-func (r *Restore) UnlockBackup() {
-	r.mu.Unlock()
 }
 
 func New(catSvr *catalog.Catalog, log logr.Logger) *Restore {
@@ -163,7 +153,7 @@ func (r *Restore) remotePath(ctx context.Context, providerName string, ff catalo
 		return "", nil, fmt.Errorf("provider %s not found in %s", providerName, providerName)
 	}
 
-	provider, err := remote.NewProviderWithOptions(nil, r.log, remote.WithOptions(remoteProvider, r.opt.Database, r.opt.EncryptionKey))
+	provider, err := remote.NewProviderWithOptions(r.log, remote.WithOptions(remoteProvider, r.opt.Database, r.opt.EncryptionKey))
 	if err != nil {
 		return "", nil, fmt.Errorf("new remote provider: %w", err)
 	}

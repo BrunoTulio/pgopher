@@ -2,12 +2,10 @@ package catalog
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/BrunoTulio/logr"
 	"github.com/BrunoTulio/pgopher/internal/config"
@@ -24,7 +22,7 @@ type (
 		ShortID   string
 		Name      string
 		Size      int64
-		ModTime   time.Time
+		ModTime   string
 		Encrypted bool
 	}
 )
@@ -80,11 +78,13 @@ func (c *Catalog) listLocal() ([]BackupFile, error) {
 		}
 
 		info, _ := entry.Info()
+		modTime := info.ModTime()
+
 		files = append(files, BackupFile{
-			ShortID:   c.generateShortID(entry.Name()),
+			ShortID:   utils.GenerateShortID(entry.Name(), modTime),
 			Name:      entry.Name(),
 			Size:      info.Size(),
-			ModTime:   info.ModTime(),
+			ModTime:   utils.FormatTime(modTime),
 			Encrypted: strings.HasSuffix(entry.Name(), ".age"),
 		})
 	}
@@ -93,7 +93,7 @@ func (c *Catalog) listLocal() ([]BackupFile, error) {
 
 func (c *Catalog) listRemote(ctx context.Context, provider config.RemoteProvider) ([]BackupFile, error) {
 
-	fsys, err := remote.NewProviderWithOptions(nil, c.log, remote.WithOptions(provider, c.opt.database,
+	fsys, err := remote.NewProviderWithOptions(c.log, remote.WithOptions(provider, c.opt.database,
 		c.opt.encryptKey))
 	if err != nil {
 		return nil, fmt.Errorf("remote fs: %w", err)
@@ -108,10 +108,10 @@ func (c *Catalog) listRemote(ctx context.Context, provider config.RemoteProvider
 	for _, entry := range entries {
 
 		files = append(files, BackupFile{
-			ShortID:   c.generateShortID(entry.Name),
+			ShortID:   utils.GenerateShortID(entry.Name, entry.ModTime),
 			Name:      entry.Name,
 			Size:      entry.Size,
-			ModTime:   entry.ModTime,
+			ModTime:   utils.FormatTime(entry.ModTime),
 			Encrypted: strings.HasSuffix(entry.Name, ".age"),
 		})
 	}
@@ -125,9 +125,4 @@ func (c *Catalog) findProvider(name string) (config.RemoteProvider, error) {
 		}
 	}
 	return config.RemoteProvider{}, fmt.Errorf("provider %s not found", name)
-}
-
-func (c *Catalog) generateShortID(name string) string {
-	h := sha256.Sum256([]byte(name + "pgopher-salt"))
-	return hex.EncodeToString(h[:4])
 }
