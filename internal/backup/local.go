@@ -126,6 +126,8 @@ func (b *Local) executePgDump(ctx context.Context, outputPath string) error {
 	}
 
 	gz := gzip.NewWriter(finalWriter)
+	gz.Name = filepath.Base(outputPath)
+	gz.ModTime = time.Now()
 	defer func() {
 		_ = gz.Close()
 	}()

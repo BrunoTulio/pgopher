@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/BrunoTulio/logr"
 	"github.com/BrunoTulio/pgopher/internal/catalog"
@@ -25,7 +24,6 @@ type Restore struct {
 	opt      *Options
 	catSvr   *catalog.Catalog
 	notifier notify.Notifier
-	mu       sync.Mutex
 }
 
 func New(catSvr *catalog.Catalog, log logr.Logger) *Restore {
@@ -46,10 +44,6 @@ func NewWithOpts(catSvr *catalog.Catalog, log logr.Logger, opts ...FnOptions) *R
 }
 
 func (r *Restore) Run(ctx context.Context, providerName, shortID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.log.Infof("🔒 Restore LOCK: %s/%s → %s", providerName, shortID, r.opt.Database.Name)
 
 	files, err := r.catSvr.List(ctx, providerName)
 	if err != nil {
@@ -68,7 +62,7 @@ func (r *Restore) Run(ctx context.Context, providerName, shortID string) error {
 		return fmt.Errorf("backup %s not found in %s", shortID, providerName)
 	}
 
-	backupPath := ff.Name
+	backupPath := ff.Path
 	var cleanup = func() {}
 
 	if providerName != "local" {
@@ -76,10 +70,7 @@ func (r *Restore) Run(ctx context.Context, providerName, shortID string) error {
 		if err != nil {
 			return err
 		}
-	} else {
-		backupPath = filepath.Join(r.opt.Dir, ff.Name)
 	}
-
 	defer cleanup()
 	backupFile, err := os.Open(backupPath)
 
@@ -122,20 +113,29 @@ func (r *Restore) toReader(backupFile *os.File, backupPath string) (io.ReadClose
 			return nil, fmt.Errorf("failed to create encryptor: %w", err)
 		}
 
-		decryptReader, err := enc.DecryptReader(backupFile)
+		decryptReader, err := enc.DecryptReader(backupFile) // ← Decripta o arquivo
 		if err != nil {
 			return nil, fmt.Errorf("decryption failed: %w", err)
 		}
 
 		reader = decryptReader
-		r.log.Info("✅ Decrypting in streaming mode")
+		r.log.Info("✅ Decryption completed")
 	}
+
 	r.log.Info("📦 Decompressing (streaming)...")
-	gzReader, err := gzip.NewReader(reader)
+	gzReader, err := gzip.NewReader(reader) // ← Descomprime o resultado
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}
 
+	if strings.HasSuffix(backupPath, ".age") {
+		return struct {
+			io.Reader
+			io.Closer
+		}{gzReader, gzReader}, nil
+	}
+
+	r.log.Info("✅ Decompression completed")
 	return gzReader, nil
 }
 
@@ -161,7 +161,7 @@ func (r *Restore) remotePath(ctx context.Context, providerName string, ff catalo
 	tmpPath := filepath.Join(os.TempDir(), ff.Name)
 	r.log.Infof("📥 Downloading to %s...", tmpPath)
 
-	err = provider.Download(ctx, ff.Name, tmpPath)
+	err = provider.Download(ctx, ff.Path, tmpPath)
 
 	if err != nil {
 		return "", nil, fmt.Errorf("download backup: %w", err)

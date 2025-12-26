@@ -53,9 +53,9 @@ func WithGenerateFileName(fn func() string) FnOptions {
 	}
 }
 
-func WithEncryptionKey(key string) FnOptions {
-	return func(opts *Options) {
-		opts.EncryptionKey = key
+func WithEncryptionKey(encryptionKey string) FnOptions {
+	return func(backupOptions *Options) {
+		backupOptions.EncryptionKey = encryptionKey
 	}
 }
 

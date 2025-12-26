@@ -101,6 +101,7 @@ func (p *Provider) Backup(ctx context.Context) error {
 		backup.WithOutputDir(tmpDir),
 		backup.WithoutRetention(),
 		backup.WithDatabase(p.opt.Database),
+		backup.WithEncryptionKey(p.opt.EncryptionKey),
 	)
 
 	backupFile, err := localBackup.Run(ctx)

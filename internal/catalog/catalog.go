@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"context"
+	"path"
 
 	"fmt"
 	"os"
@@ -21,6 +22,7 @@ type (
 	BackupFile struct {
 		ShortID   string
 		Name      string
+		Path      string
 		Size      int64
 		ModTime   string
 		Encrypted bool
@@ -83,6 +85,7 @@ func (c *Catalog) listLocal() ([]BackupFile, error) {
 		files = append(files, BackupFile{
 			ShortID:   utils.GenerateShortID(entry.Name(), modTime),
 			Name:      entry.Name(),
+			Path:      path.Join(c.opt.backupDir, name),
 			Size:      info.Size(),
 			ModTime:   utils.FormatTime(modTime),
 			Encrypted: strings.HasSuffix(entry.Name(), ".age"),
@@ -109,7 +112,8 @@ func (c *Catalog) listRemote(ctx context.Context, provider config.RemoteProvider
 
 		files = append(files, BackupFile{
 			ShortID:   utils.GenerateShortID(entry.Name, entry.ModTime),
-			Name:      entry.Name,
+			Name:      path.Base(entry.Name),
+			Path:      entry.Name,
 			Size:      entry.Size,
 			ModTime:   utils.FormatTime(entry.ModTime),
 			Encrypted: strings.HasSuffix(entry.Name, ".age"),
