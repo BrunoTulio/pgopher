@@ -52,6 +52,26 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  pgopher-pg18:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pgopher:pg18
+    command: daemon
+    #command: daemon --config /app/config.yaml
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+      - minio
+    volumes:
+      - ./backups:/data/backups
+      #- ./config.yaml:/app/config.yaml:ro #
+    profiles:
+      - pg18
+
 volumes:
   db_data:
     driver: local

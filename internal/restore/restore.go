@@ -113,7 +113,7 @@ func (r *Restore) toReader(backupFile *os.File, backupPath string) (io.ReadClose
 			return nil, fmt.Errorf("failed to create encryptor: %w", err)
 		}
 
-		decryptReader, err := enc.DecryptReader(backupFile) // ← Decripta o arquivo
+		decryptReader, err := enc.DecryptReader(backupFile)
 		if err != nil {
 			return nil, fmt.Errorf("decryption failed: %w", err)
 		}
@@ -123,7 +123,7 @@ func (r *Restore) toReader(backupFile *os.File, backupPath string) (io.ReadClose
 	}
 
 	r.log.Info("📦 Decompressing (streaming)...")
-	gzReader, err := gzip.NewReader(reader) // ← Descomprime o resultado
+	gzReader, err := gzip.NewReader(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 	}

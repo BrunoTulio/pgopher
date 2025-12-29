@@ -29,7 +29,7 @@ database:
   name: ""
 
 local:
-  dir: "./backups"
+  dir: "/data/backups"
   schedule: 
     - "02:00"
     - "14:00"

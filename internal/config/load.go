@@ -240,7 +240,7 @@ func LoadFromEnv() (*Config, error) {
 	}
 
 	cfg.LocalBackup = LocalBackupConfig{
-		Dir:      stringOrEmpty("BACKUP_DIR", "/backups"),
+		Dir:      stringOrEmpty("BACKUP_DIR", "/data/backups"),
 		Schedule: stringsOrEmpty("BACKUP_SCHEDULE", []string{}),
 		Enabled:  true,
 	}

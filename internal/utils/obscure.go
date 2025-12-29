@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -17,9 +18,7 @@ import (
 var obscureKey = ""
 
 func init() {
-	if obscureKey == "" {
-		obscureKey = "dev-mode-key"
-	}
+	obscureKey = os.Getenv("OBSCURE_KEY")
 }
 
 // deriveKey normaliza qualquer string para 32 bytes (AES-256)
