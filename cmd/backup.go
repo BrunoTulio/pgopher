@@ -102,6 +102,9 @@ func runBackup(cmd *cobra.Command, args []string) {
 	backupService := backup.NewWithFnOptions(log, backup.WithConfig(cfg))
 	notifierService := createNotifierService(cfg)
 
+	store, cleanup := createStore()
+	defer cleanup()
+
 	timeoutDuration := time.Duration(backupTimeout) * time.Minute
 	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
 	defer cancel()
@@ -135,7 +138,7 @@ func runBackup(cmd *cobra.Command, args []string) {
 		log.Infof("☁️  Uploading to: %s (%s)", remoteCfg.Name, remoteCfg.Type)
 		log.Infof("📍 Remote path: %s", remoteCfg.Path)
 
-		provider, err := remote.NewProviderWithOptions( /*restoreService,*/ log,
+		provider, err := remote.NewProviderWithOptions(store, log,
 			remote.WithOptions(*remoteCfg, cfg.Database, cfg.EncryptionKey),
 		)
 		if err != nil {

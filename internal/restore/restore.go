@@ -153,7 +153,7 @@ func (r *Restore) remotePath(ctx context.Context, providerName string, ff catalo
 		return "", nil, fmt.Errorf("provider %s not found in %s", providerName, providerName)
 	}
 
-	provider, err := remote.NewProviderWithOptions(r.log, remote.WithOptions(remoteProvider, r.opt.Database, r.opt.EncryptionKey))
+	provider, err := remote.NewClientWithOptions(r.log, remote.WithOptions(remoteProvider, r.opt.Database, r.opt.EncryptionKey))
 	if err != nil {
 		return "", nil, fmt.Errorf("new remote provider: %w", err)
 	}

@@ -15,7 +15,7 @@ type (
 		Name          string
 		Type          string // s3, drive, dropbox, mega
 		Path          string // prefixo remoto: bucket/pasta/base
-		MaxVersions   int    // 0 = sobrescreve, >0 = rotaciona versões
+		MaxVersions   int
 		Config        map[string]string
 		Database      config.DatabaseConfig
 		EncryptionKey string
@@ -48,7 +48,7 @@ func WithPath(path string) FnOptions {
 }
 
 func (o *Options) HasVersioning() bool {
-	return o.MaxVersions > 0
+	return o.MaxVersions > 1
 }
 
 // GetRemoteFileName gera nome do arquivo baseado na estratégia

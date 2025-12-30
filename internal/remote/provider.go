@@ -2,19 +2,16 @@ package remote
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/BrunoTulio/logr"
 	"github.com/BrunoTulio/pgopher/internal/backup"
+	"github.com/BrunoTulio/pgopher/internal/metadata"
 	"github.com/BrunoTulio/pgopher/internal/utils"
-	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/fs/operations"
-	"github.com/schollz/progressbar/v3"
-
 	// Backends
 	_ "github.com/rclone/rclone/backend/drive"
 	_ "github.com/rclone/rclone/backend/dropbox"
@@ -28,10 +25,9 @@ var (
 
 type (
 	Provider struct {
-		log            logr.Logger
-		opt            *Options
-		fsys           fs.Fs
-		currentVersion int
+		client *Client
+		store  metadata.Store
+		log    logr.Logger
 	}
 
 	BackupFile struct {
@@ -42,57 +38,48 @@ type (
 	}
 )
 
-func NewProvider(log logr.Logger) (*Provider, error) {
-	return NewProviderWithOptions(log)
+func NewProvider(store metadata.Store, log logr.Logger) (*Provider, error) {
+	return NewProviderWithOptions(store, log)
 }
 
 func NewProviderWithOptions(
+	store metadata.Store,
 	log logr.Logger,
 	opts ...FnOptions,
 ) (*Provider, error) {
-	initRclone()
 
-	opt := &Options{}
-
-	for _, o := range opts {
-		o(opt)
-	}
-
-	fsys, err := createRemoteFs(opt)
+	client, err := NewClientWithOptions(log, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create remote filesystem: %w", err)
+		return nil, err
 	}
 
-	p := &Provider{
-		log:            log,
-		opt:            opt,
-		fsys:           fsys,
-		currentVersion: 1,
-	}
-
-	return p, nil
-}
-
-func (p *Provider) CleanupEnvs() {
-	p.opt.CleanupEnv()
+	return &Provider{
+		client: client,
+		store:  store,
+		log:    log,
+	}, nil
 }
 
 func (p *Provider) Backup(ctx context.Context) error {
-	defer p.CleanupEnvs()
 
 	log := p.log.WithMap(map[string]any{
 		"operation": "remote_backup",
-		"provider":  p.opt.Name,
-		"type":      p.opt.Type,
+		"provider":  p.client.opt.Name,
+		"type":      p.client.opt.Type,
 	})
 
-	log.Infof("☁️  Starting remote backup to %s...", p.opt.Name)
+	log.Infof("☁️  Starting remote backup to %s...", p.client.opt.Name)
 	startTime := time.Now()
 
-	fileName := p.opt.GetRemoteFileName(p.currentVersion)
+	currentVersion, err := p.getNextVersion()
+	if err != nil {
+		return fmt.Errorf("failed to get current version: %w", err)
+	}
+
+	fileName := p.client.opt.GetRemoteFileName(currentVersion)
 	tmpDir := os.TempDir()
 
-	log.Infof("   Generating backup: %s", fileName)
+	log.Infof("   Generating backup v%d: %s", currentVersion, fileName)
 
 	localBackup := backup.NewWithFnOptions(p.log,
 		backup.WithGenerateFileName(func() string {
@@ -100,8 +87,8 @@ func (p *Provider) Backup(ctx context.Context) error {
 		}),
 		backup.WithOutputDir(tmpDir),
 		backup.WithoutRetention(),
-		backup.WithDatabase(p.opt.Database),
-		backup.WithEncryptionKey(p.opt.EncryptionKey),
+		backup.WithDatabase(p.client.opt.Database),
+		backup.WithEncryptionKey(p.client.opt.EncryptionKey),
 	)
 
 	backupFile, err := localBackup.Run(ctx)
@@ -111,180 +98,59 @@ func (p *Provider) Backup(ctx context.Context) error {
 	defer func() {
 		_ = os.Remove(backupFile)
 	}()
-	log.Infof("   Uploading to %s...", p.opt.Name)
-	if err := p.uploadFile(ctx, backupFile, fileName); err != nil {
+
+	log.Infof("   Uploading to %s...", p.client.opt.Name)
+
+	obj, err := p.client.UploadFile(ctx, backupFile, fileName)
+	if err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
-
+	modTime := time.Now()
 	duration := time.Since(startTime)
-	log.Infof("✅ Remote backup to %s completed in %s", p.opt.Name, duration.Round(time.Second))
+	remotePath := p.client.opt.RemotePathFor(fileName)
+
+	lastBackup := metadata.LastBackup{
+		ShortId:    utils.GenerateShortID(fileName, modTime),
+		RemotePath: remotePath,
+		UploadedAt: modTime,
+		Size:       obj.Size(),
+		Version:    currentVersion,
+	}
+
+	if err := p.store.SaveLastBackup(p.client.opt.Name, lastBackup); err != nil {
+		log.Warnf("Failed to save backup metadata: %v", err)
+	}
+
+	log.Infof("✅ Remote backup v%d to %s completed in %s",
+		currentVersion, p.client.opt.Name, duration.Round(time.Second))
 
 	return nil
 }
 
-func (p *Provider) List(ctx context.Context) ([]BackupFile, error) {
-	defer p.CleanupEnvs()
-
-	p.log.Infof("📂 Listing remote: %s", p.opt.Name)
-
-	entries, err := p.fsys.List(ctx, p.opt.Path)
+func (p *Provider) saveLastBackup(lastBackup metadata.LastBackup) {
+	err := p.store.SaveLastBackup(p.client.opt.Name, lastBackup)
 	if err != nil {
-		return nil, fmt.Errorf("list remote: %w", err)
+		p.log.Warnf("Failed to save backup metadata: %v", err)
 	}
-	fileMap := make(map[string]fs.DirEntry)
-
-	var files []BackupFile
-	for _, entry := range entries {
-		remote := entry.Remote()
-
-		if !utils.IsFileBackup(remote) {
-			continue
-		}
-
-		if existing, found := fileMap[remote]; found {
-			if entry.ModTime(ctx).After(existing.ModTime(ctx)) {
-				fileMap[remote] = entry
-			}
-		} else {
-			fileMap[remote] = entry
-		}
-
-	}
-	for _, entry := range fileMap {
-		files = append(files, BackupFile{
-			Name:    entry.Remote(),
-			Size:    entry.Size(),
-			ModTime: entry.ModTime(ctx),
-		})
-	}
-
-	p.log.Infof("📂 Found %d files", len(files))
-	return files, nil
-}
-func (p *Provider) Download(ctx context.Context, fileName, localPath string) error {
-	defer p.CleanupEnvs()
-
-	p.log.Infof("📂 Download remote: %s", p.opt.Name)
-
-	obj, err := p.fsys.NewObject(ctx, fileName)
-
-	if err != nil {
-		return fmt.Errorf("download remote: %w", err)
-	}
-	p.log.Infof("   File size: %s", utils.FormatBytes(obj.Size()))
-
-	reader, err := obj.Open(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to open remote file: %w", err)
-	}
-	defer func() {
-		_ = reader.Close()
-	}()
-
-	localFile, err := os.Create(localPath)
-	if err != nil {
-		return fmt.Errorf("failed to create local file: %w", err)
-	}
-	defer func() {
-		_ = localFile.Close()
-	}()
-
-	bar := progressbar.DefaultBytes(
-		obj.Size(),
-		fmt.Sprintf("Downloading %s", fileName),
-	)
-
-	_, err = io.Copy(io.MultiWriter(localFile, bar), reader)
-	if err != nil {
-		return fmt.Errorf("download failed: %w", err)
-	}
-
-	p.log.Infof("✅ Downloaded %s", fileName)
-	return nil
 }
 
-func (p *Provider) uploadFile(ctx context.Context, localPath, remoteName string) error {
-	file, err := os.Open(localPath)
-	if err != nil {
-		return fmt.Errorf("failed to open local file: %w", err)
-	}
-	defer func() {
-		_ = file.Close()
-	}()
-
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("failed to stat file: %w", err)
+func (p *Provider) getNextVersion() (int, error) {
+	if !p.client.opt.HasVersioning() {
+		return 1, nil
 	}
 
-	p.log.Infof("   File size: %s", utils.FormatBytes(fileInfo.Size()))
-
-	fullPath := p.opt.RemotePathFor(remoteName)
-
-	_, err = operations.Rcat(ctx, p.fsys, fullPath, file, fileInfo.ModTime(), nil)
+	lastVersion, err := p.store.GetLastBackup(p.client.opt.Name)
+	if errors.Is(err, metadata.ErrNotFound) {
+		return 1, nil
+	}
 	if err != nil {
-		return fmt.Errorf("rclone upload failed: %w", err)
+		return 1, err
 	}
 
-	p.log.Infof("   ✅ Uploaded: %s", remoteName)
-
-	return nil
-}
-
-func initRclone() {
-	rcloneInitOnce.Do(func() {
-		configureRclone()
-	})
-}
-
-func configureRclone() {
-	ctx := context.Background()
-	ci := fs.GetConfig(ctx)
-
-	// Log Level
-	// - LogLevelDebug: Modo desenvolvimento (muito verboso)
-	// - LogLevelInfo: Modo produção (normal)
-	// - LogLevelError: Apenas erros
-	ci.LogLevel = fs.LogLevelDebug // Trocar para Debug se precisar
-
-	// Performance
-	ci.Transfers = 4                             // Conexões paralelas (bom para uploads grandes)
-	ci.Checkers = 8                              // Checkers paralelos
-	ci.BufferSize = 16 * 1024 * 1024             // 16 MB buffer (importante!)
-	ci.StreamingUploadCutoff = 100 * 1024 * 1024 // 100 MB (streaming acima disso)
-
-	// Comportamento
-	ci.UseListR = false       // Não usar ListR (melhor para poucos arquivos)
-	ci.NoGzip = false         // Usar compressão quando possível
-	ci.NoCheckDest = false    // Sempre verificar destino
-	ci.IgnoreChecksum = false // Validar checksums
-	ci.DryRun = false         // Executar de verdade
-
-	// Timeouts e Retries
-	ci.ConnectTimeout = fs.Duration(60 * time.Second)
-	ci.Timeout = fs.Duration(5 * time.Minute)
-	ci.LowLevelRetries = 10 // Tentativas em erro
-	ci.Retries = 3          // Retries de alto nível
-
-	// Stats e Progress
-	ci.StatsOneLine = false
-	ci.Progress = false
-	ci.StatsLogLevel = fs.LogLevelInfo
-
-	// Outros
-	ci.UserAgent = "pgopher-backup/1.0"
-}
-
-func createRemoteFs(opt *Options) (fs.Fs, error) {
-	ctx := context.Background()
-	err := opt.SetupEnv()
-	if err != nil {
-		return nil, fmt.Errorf("setup environment: %w", err)
+	if lastVersion.Version >= p.client.opt.MaxVersions {
+		return 1, nil
 	}
-	remotePath := opt.Name + ":"
-	fsys, err := fs.NewFs(ctx, remotePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create fs: %w", err)
-	}
-	return fsys, nil
+
+	return lastVersion.Version + 1, nil
+
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/BrunoTulio/pgopher/internal/config"
+	"github.com/BrunoTulio/pgopher/internal/metadata"
 	"github.com/BrunoTulio/pgopher/internal/notify"
 	"github.com/BrunoTulio/pgopher/internal/utils"
 	"github.com/joho/godotenv"
@@ -49,6 +50,23 @@ func loadConfigOrFail() (*config.Config, error) {
 	utils.InitTimezone(cfg.MustLocation(), "2006-01-02 15:04:05")
 
 	return cfg, nil
+
+}
+
+func createStore() (metadata.Store, func()) {
+	metadataDir := os.Getenv("METADATA_DIR")
+	if metadataDir == "" {
+		metadataDir = "/var/lib/pgopher/metadata" // Default
+	}
+
+	store, err := metadata.NewStore(metadataDir)
+	if err != nil {
+		log.Fatalf("failed to create store: %v", err)
+	}
+
+	return store, func() {
+		_ = store.Close()
+	}
 
 }
 

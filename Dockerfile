@@ -34,7 +34,9 @@ COPY --from=builder /build/pgopher /usr/local/bin/pgopher
 
 RUN adduser -D -u 1000 pgopher && \
     mkdir -p /data/backups && \
-    chown -R pgopher:pgopher /data
+    mkdir -p /var/lib/pgopher/metadata && \
+    chown -R pgopher:pgopher /data && \
+    chown -R pgopher:pgopher /var/lib/pgopher
 
 USER pgopher
 

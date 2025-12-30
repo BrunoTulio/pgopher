@@ -29,8 +29,9 @@ type (
 	}
 )
 
-func New(log logr.Logger) *Catalog {
-	return &Catalog{}
+func New(
+	log logr.Logger) *Catalog {
+	return NewWithOptions(log)
 }
 
 func NewWithOptions(log logr.Logger, opts ...func(*Options)) *Catalog {
@@ -96,7 +97,7 @@ func (c *Catalog) listLocal() ([]BackupFile, error) {
 
 func (c *Catalog) listRemote(ctx context.Context, provider config.RemoteProvider) ([]BackupFile, error) {
 
-	fsys, err := remote.NewProviderWithOptions(c.log, remote.WithOptions(provider, c.opt.database,
+	fsys, err := remote.NewClientWithOptions(c.log, remote.WithOptions(provider, c.opt.database,
 		c.opt.encryptKey))
 	if err != nil {
 		return nil, fmt.Errorf("remote fs: %w", err)

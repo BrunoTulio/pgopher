@@ -10,6 +10,7 @@ import (
 	"github.com/BrunoTulio/pgopher/internal/backup"
 	"github.com/BrunoTulio/pgopher/internal/config"
 	"github.com/BrunoTulio/pgopher/internal/lock"
+	"github.com/BrunoTulio/pgopher/internal/metadata"
 	"github.com/BrunoTulio/pgopher/internal/notify"
 	"github.com/BrunoTulio/pgopher/internal/remote"
 
@@ -33,18 +34,22 @@ type Scheduler struct {
 	log         logr.Logger
 	notifier    notify.Notifier
 	locker      lock.Locker
+	store       metadata.Store
 	jobs        []JobInfo
 }
 
-func New(backupSvc *backup.Local,
+func New(
+	store metadata.Store,
+	backupSvc *backup.Local,
 	locker lock.Locker,
 	notifier notify.Notifier,
 	log logr.Logger,
 ) *Scheduler {
-	return NewWithOptions(backupSvc, notifier, locker, log)
+	return NewWithOptions(store, backupSvc, notifier, locker, log)
 }
 
 func NewWithOptions(
+	store metadata.Store,
 	backupSvc *backup.Local,
 	notifier notify.Notifier,
 	locker lock.Locker,
@@ -69,6 +74,7 @@ func NewWithOptions(
 		log:       log,
 		notifier:  notifier,
 		locker:    locker,
+		store:     store,
 	}
 }
 
@@ -267,7 +273,7 @@ func (s *Scheduler) runRemoteBackup(remoteProvider config.RemoteProvider) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(remoteProvider.Timeout)*time.Second)
 	defer cancel()
 
-	provider, err := remote.NewProviderWithOptions( /*s.locker,*/ s.log, remote.WithOptions(remoteProvider, s.opt.Database, s.opt.EncryptionKey))
+	provider, err := remote.NewProviderWithOptions(s.store, s.log, remote.WithOptions(remoteProvider, s.opt.Database, s.opt.EncryptionKey))
 	if err != nil {
 		s.log.Errorf("❌ Remote %s provider creation failed: %v", remoteProvider.Name, err)
 		go func() {

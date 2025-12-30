@@ -68,6 +68,8 @@ services:
       - minio
     volumes:
       - ./backups:/data/backups
+      - pgopher_metadata:/var/lib/pgopher
+
       #- ./config.yaml:/app/config.yaml:ro #
     profiles:
       - pg18
@@ -78,4 +80,6 @@ volumes:
   pgadmin_data:
     driver: local
   minio_data:
+    driver: local
+  pgopher_metadata:
     driver: local

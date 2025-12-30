@@ -83,6 +83,9 @@ func runDaemon(cmd *cobra.Command, args []string) {
 	catalogService := catalog.NewWithOptions(log, catalog.WithConfig(cfg))
 	notifierService := createNotifierService(cfg)
 
+	store, cleanup := createStore()
+	defer cleanup()
+
 	if cfg.RunOnStartup {
 		if lockMgr.IsRestoreRunning() {
 			log.Warn("⚠️  Restore in progress, skipping scheduled local backup")
@@ -113,7 +116,7 @@ func runDaemon(cmd *cobra.Command, args []string) {
 
 			log.Infof("📦 Initializing provider: %s (%s)", providerCfg.Name, providerCfg.Type)
 
-			provider, err := remote.NewProviderWithOptions(log,
+			provider, err := remote.NewProviderWithOptions(store, log,
 				remote.WithOptions(providerCfg, cfg.Database, cfg.EncryptionKey),
 			)
 			if err != nil {
@@ -141,6 +144,7 @@ func runDaemon(cmd *cobra.Command, args []string) {
 	}
 
 	sched := scheduler.NewWithOptions(
+		store,
 		backupService,
 		notifierService,
 		lockMgr,
