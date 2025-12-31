@@ -31,3 +31,4 @@ rclone.conf
 .env
 
 pgopher.yaml
+.pgopher
