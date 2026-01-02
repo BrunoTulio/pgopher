@@ -69,7 +69,7 @@ func runDaemon(cmd *cobra.Command, args []string) {
 		log.Fatalf("Error loading config: %v", err)
 	}
 
-	pgClient := database.NewClient(&cfg.Database)
+	pgClient := database.NewClient(&cfg.Database, log)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

@@ -83,6 +83,11 @@ func (c *Config) MustLocation() *time.Location {
 	return loc
 }
 
+func (c *DatabaseConfig) AdminConnectionString() string {
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=postgres sslmode=disable",
+		c.Host, c.Port, c.Username, c.Password)
+}
+
 func (c *DatabaseConfig) ConnectionString() string {
 	return fmt.Sprintf("postgres://%s:%s@%s:%d/%s",
 		c.Username,

@@ -19,6 +19,7 @@ var (
 	restoreLatest   bool
 	restoreList     bool
 	restoreForce    bool
+	dropDB          bool
 )
 
 // restoreCmd represents the restore command
@@ -29,24 +30,33 @@ var restoreCmd = &cobra.Command{
 
 Can restore from local file or fetch from remote provider.
 
+MODES:
+  Default: Non-destructive restore (replaces objects in backup, keeps extras) [web:60][web:63]
+  --drop-db: Destructive restore (drops + recreates DB first, result exactly like backup) [web:79][web:88]
+
 Examples:
-  # List available local backups
+  # List available backups
   pgopher restore --list
 
-  # Restore by shortID
+  # Restore by shortID (non-destructive)
   pgopher restore --id abc123
 
-  # Restore from specific local file
-  pgopher restore --file /backups/mydb_20251226_083000.sql.gz
-
-  # Restore latest local backup
+  # Restore latest local backup (non-destructive)
   pgopher restore --latest
 
-  # Restore from remote provider (latest)
+  # Restore latest from remote (non-destructive)
   pgopher restore --provider s3 --latest
 
-  # Force restore (skip connection checks)
-  pgopher restore --id abc123 --force`,
+  # DESTRUCTIVE: Drop DB + restore latest
+  pgopher restore --latest --drop-db
+
+  # DESTRUCTIVE: Drop DB + restore specific backup
+  pgopher restore --id abc123 --drop-db
+
+  # Force restore (skip checks)
+  pgopher restore --id abc123 --force
+
+WARNING: --drop-db will permanently delete ALL data in the target database!`,
 	Run: runRestore,
 }
 
@@ -63,6 +73,13 @@ func init() {
 		"list available backups")
 	restoreCmd.Flags().BoolVar(&restoreForce, "force", false,
 		"force restore without confirmation")
+
+	restoreCmd.Flags().BoolVar(
+		&dropDB,
+		"drop-db",
+		false,
+		"Drop and recreate target database before restore (DESTRUCTIVE)",
+	)
 
 }
 
@@ -116,7 +133,7 @@ func runRestore(cmd *cobra.Command, args []string) {
 
 	log.Infof("📦 Selected backup shortID: %s", shortID)
 
-	pgClient := database.NewClient(&cfg.Database)
+	pgClient := database.NewClient(&cfg.Database, log)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -125,6 +142,15 @@ func runRestore(cmd *cobra.Command, args []string) {
 		log.Fatalf("Database connection failed: %v", err)
 	}
 	log.Info("✅ Database connection successful")
+
+	if dropDB {
+		log.Warnf("⚠️  DESTRUCTIVE RESTORE ENABLED: will DROP database '%s'", cfg.Database.Name)
+		log.Warnf("   All existing data in '%s' will be PERMANENTLY DELETED!", cfg.Database.Name)
+		log.Infof("   💾 Backup: %s (%s)", shortID, backupProvider)
+		if err := pgClient.DropDatabase(ctx); err != nil {
+			log.Fatalf("Database drop failed: %v", err)
+		}
+	}
 
 	if !restoreForce {
 		if !checkAndConfirmRestore(ctx, pgClient) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/BrunoTulio/logr"
 	"github.com/BrunoTulio/pgopher/internal/config"
 	"github.com/jackc/pgx/v5"
 )
@@ -19,10 +20,11 @@ type ConnectionInfo struct {
 }
 type Client struct {
 	config *config.DatabaseConfig
+	log    logr.Logger
 }
 
-func NewClient(cfg *config.DatabaseConfig) *Client {
-	return &Client{config: cfg}
+func NewClient(cfg *config.DatabaseConfig, log logr.Logger) *Client {
+	return &Client{config: cfg, log: log}
 }
 
 func (c *Client) TestConnection(ctx context.Context) error {
@@ -86,6 +88,58 @@ func (c *Client) Ping(ctx context.Context) error {
 	}()
 
 	return conn.Ping(ctx)
+}
+
+func (c *Client) DropDatabase(ctx context.Context) error {
+	conn, err := pgx.Connect(ctx, c.config.AdminConnectionString())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = conn.Close(ctx)
+	}()
+	dbName := c.config.Name
+	if dbName == "postgres" {
+		return fmt.Errorf("refusing to drop system database 'postgres'")
+	}
+
+	c.log.Warnf("⚠️  Dropping database '%s' (all data will be LOST)", dbName)
+
+	terminateSQL := fmt.Sprintf(`
+        DO $$
+        BEGIN
+            PERFORM pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = '%s' AND pid <> pg_backend_pid();
+        END$$;`, dbName)
+
+	if _, err := conn.Exec(ctx, terminateSQL); err != nil {
+		return fmt.Errorf("failed to terminate connections on '%s': %w", dbName, err)
+	}
+	c.log.Debugf("✅ Terminated connections on '%s'", dbName)
+
+	// 2. DROP DATABASE (commit automático após Exec)
+	dropSQL := fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, dbName)
+	if _, err := conn.Exec(ctx, dropSQL); err != nil {
+		return fmt.Errorf("failed to drop database '%s': %w", dbName, err)
+	}
+	c.log.Debugf("✅ Dropped database '%s'", dbName)
+
+	// 3. CREATE DATABASE novo (commit automático após Exec)
+	createSQL := fmt.Sprintf(`
+        CREATE DATABASE "%s"
+        OWNER "%s"
+        ENCODING 'UTF8'
+        LC_COLLATE 'C'
+        LC_CTYPE 'C'
+        TEMPLATE template0;`, dbName, c.config.Username)
+
+	if _, err := conn.Exec(ctx, createSQL); err != nil {
+		return fmt.Errorf("failed to create database '%s': %w", dbName, err)
+	}
+
+	c.log.Infof("✅ Database '%s' dropped and recreated successfully", dbName)
+	return nil
 }
 
 func (c *Client) CountConnections(ctx context.Context) (int, error) {

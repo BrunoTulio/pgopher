@@ -87,7 +87,7 @@ func runBackup(cmd *cobra.Command, args []string) {
 		cfg.Database.Name)
 	log.Infof("📁 Backup directory: %s", cfg.LocalBackup.Dir)
 
-	pgClient := database.NewClient(&cfg.Database)
+	pgClient := database.NewClient(&cfg.Database, log)
 	testCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
