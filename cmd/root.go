@@ -140,32 +140,31 @@ run_remote_on_startup: false
 var rootCmd = &cobra.Command{
 	Use:   "pgopher",
 	Short: "Automated PostgreSQL backup and restore service",
-	Long: `pgopher is a small daemon focused on safe, automated backups of PostgreSQL
-	databases. It was designed to be simple to operate in production, com foco em:
+	Long: `pgopher is a small daemon focused on safe, automated backups of PostgreSQL databases.
+Designed to be simple to operate in production, with focus on:
 
-	- Backups agendados via cron (ex: "0 2 * * *")
-	- Criptografia dos dumps antes de salvar (AGE)
-	- Armazenamento local e em provedores remotos (ex: Dropbox, Google Drive, MEGA)
-	- Notificações de sucesso/erro (Discord, Telegram, Mail)
-	- Restauração guiada via CLI, com confirmação antes de sobrescrever o banco
+- Scheduled backups via cron (ex: "0 2 * * *")
+- Encryption of dumps before storage (AGE)
+- Local and remote provider storage (S3, Dropbox, Google Drive, MEGA)
+- Success/error notifications (Discord, Telegram, Email)
+- Guided CLI restoration with confirmation before overwriting database
 
-	Exemplos de uso:
+Examples:
 
-	# Criar um config.yaml padrão
-	pgopher init
+  # Create default config.yaml
+  pgopher init
 
-	# Validar configuração
-	pgopher config validate -c config.yaml
+  # Validate configuration
+  pgopher config validate -c config.yaml
 
-	# Rodar um backup manual
-	pgopher backup run
+  # Run manual backup
+  pgopher backup run
 
-	# Restaurar um backup específico
-	pgopher restore run dropbox <shortID> prod_db
+  # Restore specific backup
+  pgopher restore run dropbox <shortID> prod_db
 
-	# Subir o daemon (scheduler + API HTTP)
-	pgopher daemon -c /etc/pgopher/config.yaml
-`,
+  # Start daemon (scheduler + HTTP API)
+  pgopher daemon -c /etc/pgopher/config.yaml`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		log = zap.New(
 			zap.WithConsole(true),
